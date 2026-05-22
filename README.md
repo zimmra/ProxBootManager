@@ -32,9 +32,10 @@ Proxmox VE API (https://<host>:8006/api2/json)
 
 - A Proxmox VE host/node reachable from the install target.
 - A Proxmox API token with permission to audit guests and update VM/LXC options.
-- A Debian 12 (Bookworm) LXC container or VM to run ProxBootManager.
-- Root access in the Debian container for the installer.
+- A Debian 12 (Bookworm) **unprivileged** LXC container to run ProxBootManager.
 - Network access from the container to `https://<PROXMOX_HOST>:8006`.
+
+> **Note:** The installer and systemd service run as `root` inside the container. In an unprivileged LXC, the container's root UID is mapped to an unprivileged host UID by Proxmox, so this is safe and expected.
 
 ## Quick Install
 
@@ -183,9 +184,10 @@ bash -n install.sh
 
 ## Security Notes
 
-- Proxmox credentials are read only by the backend from `.env`.
+- Proxmox credentials are read only by the backend from `.env`, which is stored at `/opt/proxbootmanager/backend/.env` with mode `600`.
 - `/api/config/status` reports whether required env vars are set, but does not expose secret values.
 - Use a Proxmox token with the least privileges needed for your environment.
+- The service runs as `root` inside an unprivileged LXC container. Proxmox maps the container's root UID to an unprivileged host UID, providing host-level isolation without requiring a separate service account inside the container.
 - If possible, run ProxBootManager on a trusted management network or behind your preferred reverse proxy/auth layer.
 
 ## License

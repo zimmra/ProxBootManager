@@ -14,7 +14,6 @@ die()     { echo -e "${RED}[ERROR]${RESET} $*" >&2; exit 1; }
 [[ $EUID -eq 0 ]] || die "Run this script as root (sudo ./install.sh)"
 
 INSTALL_DIR=/opt/proxbootmanager
-SERVICE_USER=proxbootmanager
 SERVICE_FILE=/etc/systemd/system/proxbootmanager.service
 REPO_URL=https://github.com/zimmra/ProxBootManager
 
@@ -32,15 +31,6 @@ if ! node --version 2>/dev/null | grep -q '^v20\.'; then
   apt-get install -y -qq nodejs
 else
   success "Node.js $(node --version) already installed"
-fi
-
-# ---------- dedicated system user ----------
-if id -u "$SERVICE_USER" &>/dev/null; then
-  success "System user '$SERVICE_USER' already exists"
-else
-  info "Creating system user '$SERVICE_USER'..."
-  useradd --system --no-create-home --shell /usr/sbin/nologin "$SERVICE_USER"
-  success "Created system user '$SERVICE_USER'"
 fi
 
 # ---------- clone or update repo ----------
@@ -126,14 +116,8 @@ fi
 grep -q '^NODE_ENV=' "$ENV_FILE" || echo 'NODE_ENV=production' >> "$ENV_FILE"
 sed -i 's|^NODE_ENV=.*|NODE_ENV=production|' "$ENV_FILE"
 
-# Secure the env file
-chown root:"$SERVICE_USER" "$ENV_FILE"
-chmod 640 "$ENV_FILE"
-
-# ---------- ownership ----------
-chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR"
-# Let root still write to node_modules during updates
-chmod -R u+w "$INSTALL_DIR"
+# Secure the env file (root-only in LXC container)
+chmod 600 "$ENV_FILE"
 
 # ---------- systemd service ----------
 info "Writing systemd service file $SERVICE_FILE..."
@@ -144,7 +128,7 @@ After=network.target
 
 [Service]
 Type=simple
-User=$SERVICE_USER
+User=root
 WorkingDirectory=$INSTALL_DIR/backend
 EnvironmentFile=$ENV_FILE
 ExecStart=/usr/bin/node dist/index.js
