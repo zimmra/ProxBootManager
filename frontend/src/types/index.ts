@@ -21,13 +21,19 @@ export interface Guest {
 }
 
 export interface ProxmoxStatus {
+  configured?: boolean;
+  envSet?: {
+    PROXMOX_HOST: boolean;
+    PROXMOX_TOKEN_ID: boolean;
+    PROXMOX_TOKEN_SECRET: boolean;
+    PROXMOX_NODE: boolean;
+  };
   connected: boolean;
+  connectionError?: string | null;
   node?: string;
   host?: string;
   version?: string;
   error?: string | null;
-  connectionError?: string | null;
-  configured?: boolean;
   checkedAt?: string;
 }
 

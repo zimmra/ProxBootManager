@@ -55,7 +55,13 @@ export function formatStartup(config: StartupConfig): string {
 
 export function getApiErrorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
-    const data = error.response?.data as { error?: string; message?: string } | undefined;
+    if (!error.response) {
+      return 'Cannot reach the backend server. Check that it is running on port 3001.';
+    }
+    const status = error.response.status;
+    if (status === 401) return 'Authentication failed. Check your Proxmox API token credentials.';
+    if (status === 403) return 'Access denied. Your Proxmox token may lack required permissions.';
+    const data = error.response.data as { error?: string; message?: string } | undefined;
     return data?.error ?? data?.message ?? error.message;
   }
   return error instanceof Error ? error.message : 'Unknown error';

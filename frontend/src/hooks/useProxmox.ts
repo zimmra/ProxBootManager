@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import {
   formatStartup,
+  getApiErrorMessage,
   getGuests,
   getStatus,
   parseStartup,
@@ -53,7 +55,19 @@ export function useUpdateBoot() {
       );
       return { previous };
     },
-    onError: (_error, _variables, context) => {
+    onSuccess: (_data, variables) => {
+      if (variables.onboot !== undefined) {
+        toast.success(`Autoboot ${variables.onboot ? 'enabled' : 'disabled'} for guest ${variables.vmid}`);
+      } else {
+        toast.success(`Boot config saved for guest ${variables.vmid}`);
+      }
+    },
+    onError: (error, variables, context) => {
+      if (variables.onboot !== undefined) {
+        toast.error(`Failed to update autoboot: ${getApiErrorMessage(error)}`);
+      } else {
+        toast.error(`Failed to save boot config: ${getApiErrorMessage(error)}`);
+      }
       if (context?.previous) queryClient.setQueryData(guestsQueryKey, context.previous);
     },
     onSettled: () => void queryClient.invalidateQueries({ queryKey: guestsQueryKey }),
@@ -77,7 +91,9 @@ export function useReorderGuests() {
       );
       return { previous };
     },
-    onError: (_error, _entries, context) => {
+    onSuccess: () => toast.success('Boot order saved'),
+    onError: (error, _entries, context) => {
+      toast.error(`Failed to save boot order: ${getApiErrorMessage(error)}`);
       if (context?.previous) queryClient.setQueryData(guestsQueryKey, context.previous);
     },
     onSettled: () => void queryClient.invalidateQueries({ queryKey: guestsQueryKey }),

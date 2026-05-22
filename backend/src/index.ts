@@ -9,7 +9,20 @@ import configRouter from './routes/config';
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-app.use(cors());
+const corsOrigins = process.env.CORS_ORIGIN?.trim() || '*';
+const corsAllowed = new Set([
+  'http://localhost:5173',
+  'http://localhost:4173',
+  ...corsOrigins.split(',').map((origin) => origin.trim()).filter(Boolean),
+]);
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin || corsAllowed.has('*') || corsAllowed.has(origin)) return callback(null, true);
+      callback(null, false);
+    },
+  }),
+);
 app.use(express.json());
 
 app.get('/api/health', (_req, res) => {
