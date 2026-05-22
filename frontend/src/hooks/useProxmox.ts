@@ -5,7 +5,8 @@ import {
   getStatus,
   parseStartup,
   reorderGuests,
-  updateGuestStartup,
+  updateOnboot,
+  updateStartup,
 } from '../api/proxmox';
 import type { Guest, NormalizedGuestType, ProxmoxStatus, ReorderEntry, StartupConfig } from '../types';
 
@@ -33,8 +34,9 @@ export function useGuests() {
 export function useUpdateBoot() {
   const queryClient = useQueryClient();
 
-  return useMutation<Guest, Error, { vmid: number; type: NormalizedGuestType; onboot?: boolean; startup?: string }, { previous?: Guest[] }>({
-    mutationFn: ({ vmid, type, onboot, startup }) => updateGuestStartup(type, vmid, { onboot, startup }),
+  return useMutation<void, Error, { vmid: number; type: NormalizedGuestType; onboot?: boolean; startup?: string }, { previous?: Guest[] }>({
+    mutationFn: ({ vmid, type, onboot, startup }) =>
+      onboot !== undefined ? updateOnboot(vmid, type, onboot) : updateStartup(vmid, type, startup ?? ''),
     onMutate: async ({ vmid, onboot, startup }) => {
       await queryClient.cancelQueries({ queryKey: guestsQueryKey });
       const previous = queryClient.getQueryData<Guest[]>(guestsQueryKey);
@@ -61,7 +63,7 @@ export function useUpdateBoot() {
 export function useReorderGuests() {
   const queryClient = useQueryClient();
 
-  return useMutation<Guest[], Error, ReorderEntry[], { previous?: Guest[] }>({
+  return useMutation<void, Error, ReorderEntry[], { previous?: Guest[] }>({
     mutationFn: reorderGuests,
     onMutate: async (entries) => {
       await queryClient.cancelQueries({ queryKey: guestsQueryKey });

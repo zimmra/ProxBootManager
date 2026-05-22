@@ -36,13 +36,6 @@ export interface GuestsResponse {
   status?: ProxmoxStatus;
 }
 
-export interface StartupUpdatePayload {
-  onboot?: boolean;
-  startup?: string;
-  order?: number;
-  up?: number;
-}
-
 export interface ReorderEntry {
   vmid: number;
   type: NormalizedGuestType;

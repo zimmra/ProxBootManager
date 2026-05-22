@@ -6,7 +6,6 @@ import type {
   ProxmoxStatus,
   ReorderEntry,
   StartupConfig,
-  StartupUpdatePayload,
 } from '../types';
 
 const rawBase = import.meta.env.VITE_API_BASE_URL?.trim();
@@ -63,7 +62,7 @@ export function getApiErrorMessage(error: unknown): string {
 }
 
 export async function getStatus(): Promise<ProxmoxStatus> {
-  const { data } = await api.get<ProxmoxStatus>('/status');
+  const { data } = await api.get<ProxmoxStatus>('/config/status');
   return data;
 }
 
@@ -73,17 +72,22 @@ export async function getGuests(): Promise<Guest[]> {
   return guests.map((guest) => normalizeGuest(guest as Guest & { type: string }));
 }
 
-export async function updateGuestStartup(
-  type: NormalizedGuestType,
+export async function updateOnboot(
   vmid: number,
-  payload: StartupUpdatePayload,
-): Promise<Guest> {
-  const { data } = await api.put<Guest>(`/guests/${type}/${vmid}/startup`, payload);
-  return normalizeGuest(data as Guest & { type: string });
+  type: NormalizedGuestType,
+  onboot: boolean,
+): Promise<void> {
+  await api.put(`/guests/${vmid}/onboot`, { onboot, type });
 }
 
-export async function reorderGuests(entries: ReorderEntry[]): Promise<Guest[]> {
-  const { data } = await api.put<Guest[] | GuestsResponse>('/guests/reorder', { guests: entries });
-  const guests = Array.isArray(data) ? data : data.guests;
-  return guests.map((guest) => normalizeGuest(guest as Guest & { type: string }));
+export async function updateStartup(
+  vmid: number,
+  type: NormalizedGuestType,
+  startup: string,
+): Promise<void> {
+  await api.put(`/guests/${vmid}/startup`, { startup, type });
+}
+
+export async function reorderGuests(entries: ReorderEntry[]): Promise<void> {
+  await api.put('/guests/reorder', entries);
 }
