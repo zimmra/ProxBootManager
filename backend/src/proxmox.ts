@@ -1,5 +1,4 @@
-import axios, { AxiosInstance } from 'axios';
-import https from 'https';
+import { PveClient } from '@corsinvest/cv4pve-api-javascript';
 
 export interface VMInfo {
   vmid: number;
@@ -14,25 +13,36 @@ export interface GuestConfig {
   [key: string]: unknown;
 }
 
+interface PveResult {
+  isSuccessStatusCode: boolean;
+  statusCode: number;
+  reasonPhrase: string;
+  response: { data?: unknown; errors?: Record<string, string> };
+}
+
+function assertOk(result: PveResult): void {
+  if (!result.isSuccessStatusCode) {
+    const errors = result.response?.errors;
+    const detail = errors ? Object.values(errors).join('; ') : result.reasonPhrase;
+    const err = new Error(detail) as Error & { status: number };
+    err.status = result.statusCode;
+    throw err;
+  }
+}
+
 export class ProxmoxClient {
-  private client: AxiosInstance;
+  private client: PveClient;
   private node: string;
 
   constructor() {
-    const host = process.env.PROXMOX_HOST;
-    const tokenId = process.env.PROXMOX_TOKEN_ID;
-    const tokenSecret = process.env.PROXMOX_TOKEN_SECRET;
-    const verifySSL = process.env.VERIFY_SSL !== 'false';
-
+    const host = process.env.PROXMOX_HOST || '';
+    const tokenId = process.env.PROXMOX_TOKEN_ID || '';
+    const tokenSecret = process.env.PROXMOX_TOKEN_SECRET || '';
     this.node = process.env.PROXMOX_NODE || '';
 
-    this.client = axios.create({
-      baseURL: `https://${host}:8006/api2/json`,
-      headers: {
-        Authorization: `PVEAPIToken=${tokenId}=${tokenSecret}`,
-      },
-      httpsAgent: new https.Agent({ rejectUnauthorized: verifySSL }),
-    });
+    this.client = new PveClient(host, 8006);
+    // Token format: USER@REALM!TOKENID=SECRET
+    this.client.apiToken = `${tokenId}=${tokenSecret}`;
   }
 
   getConfiguredNode(): string {
@@ -49,36 +59,43 @@ export class ProxmoxClient {
   }
 
   async getNodes(): Promise<unknown[]> {
-    const res = await this.client.get('/nodes');
-    return res.data.data;
+    const result = await this.client.nodes.index() as PveResult;
+    assertOk(result);
+    return result.response.data as unknown[];
   }
 
   async getVMs(node: string): Promise<VMInfo[]> {
-    const res = await this.client.get(`/nodes/${node}/qemu`);
-    return (res.data.data as VMInfo[]).map((vm) => ({ ...vm, type: 'qemu' as const }));
+    const result = await this.client.nodes.get(node).qemu.vmlist(false) as PveResult;
+    assertOk(result);
+    return (result.response.data as VMInfo[]).map((vm) => ({ ...vm, type: 'qemu' as const }));
   }
 
   async getLXCs(node: string): Promise<VMInfo[]> {
-    const res = await this.client.get(`/nodes/${node}/lxc`);
-    return (res.data.data as VMInfo[]).map((ct) => ({ ...ct, type: 'lxc' as const }));
+    const result = await this.client.nodes.get(node).lxc.vmlist() as PveResult;
+    assertOk(result);
+    return (result.response.data as VMInfo[]).map((ct) => ({ ...ct, type: 'lxc' as const }));
   }
 
   async getVMConfig(node: string, vmid: number): Promise<GuestConfig> {
-    const res = await this.client.get(`/nodes/${node}/qemu/${vmid}/config`);
-    return res.data.data;
+    const result = await this.client.get(`/nodes/${node}/qemu/${vmid}/config`) as PveResult;
+    assertOk(result);
+    return result.response.data as GuestConfig;
   }
 
   async getLXCConfig(node: string, vmid: number): Promise<GuestConfig> {
-    const res = await this.client.get(`/nodes/${node}/lxc/${vmid}/config`);
-    return res.data.data;
+    const result = await this.client.get(`/nodes/${node}/lxc/${vmid}/config`) as PveResult;
+    assertOk(result);
+    return result.response.data as GuestConfig;
   }
 
   async updateVMConfig(node: string, vmid: number, data: Record<string, unknown>): Promise<void> {
-    await this.client.put(`/nodes/${node}/qemu/${vmid}/config`, data);
+    const result = await this.client.set(`/nodes/${node}/qemu/${vmid}/config`, data) as PveResult;
+    assertOk(result);
   }
 
   async updateLXCConfig(node: string, vmid: number, data: Record<string, unknown>): Promise<void> {
-    await this.client.put(`/nodes/${node}/lxc/${vmid}/config`, data);
+    const result = await this.client.set(`/nodes/${node}/lxc/${vmid}/config`, data) as PveResult;
+    assertOk(result);
   }
 }
 

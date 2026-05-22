@@ -36,8 +36,8 @@ app.use('/api/config', configRouter);
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   const message = err instanceof Error ? err.message : 'Internal server error';
   const status =
-    err instanceof Error && 'response' in err
-      ? ((err as { response?: { status?: number } }).response?.status ?? 500)
+    err instanceof Error && 'status' in err
+      ? ((err as { status?: number }).status ?? 500)
       : 500;
   res.status(status).json({ error: message });
 });
