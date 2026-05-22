@@ -6,8 +6,14 @@ import { TableRow, TableCell } from './ui/table';
 import { Badge } from './ui/badge';
 import { Switch } from './ui/switch';
 import { Input } from './ui/input';
+import { Select } from './ui/select';
 import { parseStartup, formatStartup } from '../api/proxmox';
 import type { Guest, NormalizedGuestType } from '../types';
+
+export interface BandOption {
+  value: number;
+  label: string;
+}
 
 interface GuestRowProps {
   guest: Guest;
@@ -16,6 +22,7 @@ interface GuestRowProps {
   onUpdateOnboot: (vmid: number, type: NormalizedGuestType, onboot: boolean) => void;
   onUpdateStartup: (vmid: number, type: NormalizedGuestType, startup: string) => void;
   isDragDisabled?: boolean;
+  bandOptions: BandOption[];
 }
 
 export function GuestRow({
@@ -25,6 +32,7 @@ export function GuestRow({
   onUpdateOnboot,
   onUpdateStartup,
   isDragDisabled = false,
+  bandOptions,
 }: GuestRowProps) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
     useSortable({ id: guest.vmid, disabled: isDragDisabled });
@@ -36,24 +44,25 @@ export function GuestRow({
   };
 
   const parsed = parseStartup(displayGuest.startup);
-  const [orderVal, setOrderVal] = useState(parsed.order !== undefined ? String(parsed.order) : '');
   const [upVal, setUpVal] = useState(parsed.up !== undefined ? String(parsed.up) : '');
+  const [showCustomInput, setShowCustomInput] = useState(false);
+  const [customVal, setCustomVal] = useState('');
+  const customInputRef = useRef<HTMLInputElement>(null);
 
   const prevStartup = useRef(displayGuest.startup);
   useEffect(() => {
     if (displayGuest.startup !== prevStartup.current) {
       prevStartup.current = displayGuest.startup;
       const p = parseStartup(displayGuest.startup);
-      setOrderVal(p.order !== undefined ? String(p.order) : '');
       setUpVal(p.up !== undefined ? String(p.up) : '');
+      setShowCustomInput(false);
     }
   }, [displayGuest.startup]);
 
   function commitOrder(raw: string) {
     const p = parseStartup(displayGuest.startup);
-    const num = raw === '' ? undefined : parseInt(raw, 10);
-    if (raw !== '' && (isNaN(num as number) || (num as number) < 0)) return;
-    const next = formatStartup({ ...p, order: num });
+    const order = raw === '' ? undefined : parseInt(raw, 10);
+    const next = formatStartup({ ...p, order });
     if (next !== displayGuest.startup) onUpdateStartup(guest.vmid, guest.type, next);
   }
 
@@ -65,7 +74,25 @@ export function GuestRow({
     if (next !== displayGuest.startup) onUpdateStartup(guest.vmid, guest.type, next);
   }
 
+  function handleOrderSelectChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    if (e.target.value === '__custom__') {
+      setCustomVal('');
+      setShowCustomInput(true);
+      setTimeout(() => customInputRef.current?.focus(), 0);
+      return;
+    }
+    commitOrder(e.target.value);
+  }
+
+  function commitCustomOrder() {
+    setShowCustomInput(false);
+    const num = parseInt(customVal, 10);
+    if (customVal.trim() === '' || isNaN(num) || num < 0) return;
+    commitOrder(String(num));
+  }
+
   const isRunning = guest.status === 'running';
+  const currentOrder = parsed.order !== undefined ? String(parsed.order) : '';
 
   return (
     <TableRow
@@ -115,17 +142,38 @@ export function GuestRow({
       </TableCell>
 
       {/* Boot Order */}
-      <TableCell className="w-20">
-        <Input
-          type="number"
-          min={0}
-          value={orderVal}
-          onChange={(e) => setOrderVal(e.target.value)}
-          onBlur={() => commitOrder(orderVal)}
-          onKeyDown={(e) => e.key === 'Enter' && commitOrder(orderVal)}
-          placeholder="–"
-          className="h-7 w-16 pr-1 text-center text-xs [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-        />
+      <TableCell className="w-32">
+        {showCustomInput ? (
+          <Input
+            ref={customInputRef}
+            type="number"
+            min={0}
+            value={customVal}
+            onChange={(e) => setCustomVal(e.target.value)}
+            onBlur={commitCustomOrder}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitCustomOrder();
+              if (e.key === 'Escape') setShowCustomInput(false);
+            }}
+            placeholder="e.g. 15"
+            className="h-7 w-28 pr-1 text-center text-xs [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+          />
+        ) : (
+          <Select
+            value={currentOrder}
+            onChange={handleOrderSelectChange}
+            className="h-7 w-28 py-0 px-2 text-xs"
+          >
+            <option value="">–</option>
+            {bandOptions.map((opt) => (
+              <option key={opt.value} value={String(opt.value)}>
+                {opt.label}
+              </option>
+            ))}
+            <option disabled>──────────</option>
+            <option value="__custom__">Custom…</option>
+          </Select>
+        )}
       </TableCell>
 
       {/* Boot Delay (up) */}
