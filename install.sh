@@ -36,7 +36,8 @@ fi
 # ---------- clone or update repo ----------
 if [[ -d "$INSTALL_DIR/.git" ]]; then
   info "Updating existing repository at $INSTALL_DIR..."
-  git -C "$INSTALL_DIR" pull --ff-only
+  git -C "$INSTALL_DIR" fetch origin
+  git -C "$INSTALL_DIR" reset --hard origin/main
   success "Repository updated"
 else
   info "Cloning repository to $INSTALL_DIR..."
