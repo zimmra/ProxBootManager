@@ -14,7 +14,8 @@ import { AlertCircle, GripVertical, Save, ServerOff, Undo2 } from 'lucide-react'
 import { formatStartup, getApiErrorMessage, parseStartup, updateOnboot, updateStartup } from '../api/proxmox';
 import type { FilterState, Guest, NormalizedGuestType, PendingOverride, ReorderEntry } from '../types';
 import { BOOT_BANDS } from '../types';
-import { BootBandRow } from './BootBandRow';
+import { BootBandRow, bandDropId } from './BootBandRow';
+import type { BandVariant } from './BootBandRow';
 import { GuestRow } from './GuestRow';
 import { SaveChangesDialog } from './SaveChangesDialog';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert';
@@ -24,6 +25,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
 import { guestsQueryKey } from '../hooks/useProxmox';
+
+const PREDEFINED_SET = new Set<number>(BOOT_BANDS);
 
 function arrayMove<T>(array: T[], from: number, to: number): T[] {
   const result = [...array];
@@ -43,14 +46,9 @@ export function filterGuests(guests: Guest[], filters: FilterState): Guest[] {
   });
 }
 
-function getGuestBand(startup: string): number | null {
-  const order = parseStartup(startup).order;
-  if (order === undefined) return null;
-  return BOOT_BANDS.includes(order as (typeof BOOT_BANDS)[number]) ? order : null;
-}
-
-function assignBandOrder(startup: string, bandValue: number): string {
-  return formatStartup({ ...parseStartup(startup), order: bandValue });
+interface BandInfo {
+  value: number;
+  variant: BandVariant;
 }
 
 interface GuestTableProps {
@@ -63,12 +61,10 @@ interface GuestTableProps {
 export function GuestTable({ guests, isLoading, error, filters }: GuestTableProps) {
   const queryClient = useQueryClient();
 
-  // Ordered IDs (stable sort order, updated on drag)
   const [orderedIds, setOrderedIds] = useState<number[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
-  const [overBandValue, setOverBandValue] = useState<number | null>(null);
+  const [overBandValue, setOverBandValue] = useState<number | 'unordered' | null>(null);
 
-  // Pending changes: vmid → overrides not yet applied to server
   const [pendingOverrides, setPendingOverrides] = useState<Map<number, PendingOverride>>(new Map());
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -76,37 +72,45 @@ export function GuestTable({ guests, isLoading, error, filters }: GuestTableProp
   const isFiltered = filters.search !== '' || filters.type !== 'all' || filters.autoboot !== 'all';
   const pendingCount = pendingOverrides.size;
 
-  // Sync orderedIds when guests data refreshes (but not during a drag)
+  // Sync orderedIds when server data refreshes (not during drag)
   useEffect(() => {
     if (activeId !== null) return;
-    const guestsWithDisplay = guests.map((g) => ({
+    const withDisplay = guests.map((g) => ({
       ...g,
       startup: pendingOverrides.get(g.vmid)?.startup ?? g.startup,
     }));
-    const sorted = [...guestsWithDisplay].sort((a, b) => {
-      const orderA = parseStartup(a.startup).order ?? Number.POSITIVE_INFINITY;
-      const orderB = parseStartup(b.startup).order ?? Number.POSITIVE_INFINITY;
-      if (orderA !== orderB) return orderA - orderB;
-      return a.vmid - b.vmid;
+    const sorted = [...withDisplay].sort((a, b) => {
+      const oA = parseStartup(a.startup).order ?? Number.POSITIVE_INFINITY;
+      const oB = parseStartup(b.startup).order ?? Number.POSITIVE_INFINITY;
+      return oA !== oB ? oA - oB : a.vmid - b.vmid;
     });
     setOrderedIds(sorted.map((g) => g.vmid));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [guests]);
 
-  // Effective display data (server data merged with pending overrides)
+  // Server data merged with pending overrides
   const displayGuests = useMemo(
     () =>
       guests.map((g) => {
-        const override = pendingOverrides.get(g.vmid);
-        if (!override) return g;
-        return {
-          ...g,
-          onboot: override.onboot ?? g.onboot,
-          startup: override.startup ?? g.startup,
-        };
+        const ov = pendingOverrides.get(g.vmid);
+        if (!ov) return g;
+        return { ...g, onboot: ov.onboot ?? g.onboot, startup: ov.startup ?? g.startup };
       }),
     [guests, pendingOverrides],
   );
+
+  // All bands: predefined (always) + dynamic (from any non-predefined order values present in displayGuests)
+  const allBands = useMemo((): BandInfo[] => {
+    const dynamicValues = new Set<number>();
+    for (const g of displayGuests) {
+      const order = parseStartup(g.startup).order;
+      if (order !== undefined && !PREDEFINED_SET.has(order)) {
+        dynamicValues.add(order);
+      }
+    }
+    const combined = [...new Set([...BOOT_BANDS, ...dynamicValues])].sort((a, b) => a - b);
+    return combined.map((v) => ({ value: v, variant: PREDEFINED_SET.has(v) ? 'predefined' : 'dynamic' }));
+  }, [displayGuests]);
 
   const orderedGuests = useMemo(() => {
     const byId = new Map(displayGuests.map((g) => [g.vmid, g]));
@@ -122,31 +126,24 @@ export function GuestTable({ guests, isLoading, error, filters }: GuestTableProp
   const sortableIds = filteredGuests.map((g) => g.vmid);
   const activeGuest = activeId === null ? null : displayGuests.find((g) => g.vmid === activeId);
 
-  // Group guests by band for rendering
-  const bandedGuests = useMemo(() => {
-    const groups: Array<{ band: number | null; guests: Guest[] }> = [];
-
-    // Bands in order, plus ungrouped at the end
-    const bandMap = new Map<number | null, Guest[]>();
-    for (const b of BOOT_BANDS) bandMap.set(b, []);
-    bandMap.set(null, []);
-
+  // Group filtered guests by exact order value; collect unordered separately
+  const { bandRows, unorderedGuests } = useMemo(() => {
+    const orderMap = new Map<number, Guest[]>();
+    const unordered: Guest[] = [];
     for (const g of filteredGuests) {
-      const band = getGuestBand(g.startup);
-      const key = band !== null && BOOT_BANDS.includes(band as (typeof BOOT_BANDS)[number]) ? band : null;
-      bandMap.get(key)!.push(g);
+      const order = parseStartup(g.startup).order;
+      if (order === undefined) {
+        unordered.push(g);
+      } else {
+        if (!orderMap.has(order)) orderMap.set(order, []);
+        orderMap.get(order)!.push(g);
+      }
     }
-
-    for (const b of BOOT_BANDS) {
-      groups.push({ band: b, guests: bandMap.get(b)! });
-    }
-    const ungrouped = bandMap.get(null)!;
-    if (ungrouped.length > 0) {
-      groups.push({ band: null, guests: ungrouped });
-    }
-
-    return groups;
-  }, [filteredGuests]);
+    return {
+      bandRows: allBands.map((b) => ({ ...b, guests: orderMap.get(b.value) ?? [] })),
+      unorderedGuests: unordered,
+    };
+  }, [filteredGuests, allBands]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -178,12 +175,11 @@ export function GuestTable({ guests, isLoading, error, filters }: GuestTableProp
   }
 
   function handleDragOver(event: DragOverEvent) {
-    if (!event.over) {
-      setOverBandValue(null);
-      return;
-    }
+    if (!event.over) { setOverBandValue(null); return; }
     const overId = String(event.over.id);
-    if (overId.startsWith('band-')) {
+    if (overId === bandDropId('unordered')) {
+      setOverBandValue('unordered');
+    } else if (overId.startsWith('band-')) {
       const val = parseInt(overId.replace('band-', ''), 10);
       setOverBandValue(isNaN(val) ? null : val);
     } else {
@@ -200,25 +196,35 @@ export function GuestTable({ guests, isLoading, error, filters }: GuestTableProp
     const activeVmid = Number(active.id);
     const overIdStr = String(over.id);
 
-    // Dropped on a band header → assign that band's order value
+    // Dropped on the Unordered band → remove order from startup
+    if (overIdStr === bandDropId('unordered')) {
+      const serverGuest = guests.find((g) => g.vmid === activeVmid);
+      if (serverGuest) {
+        const currentStartup = pendingOverrides.get(activeVmid)?.startup ?? serverGuest.startup;
+        const newStartup = formatStartup({ ...parseStartup(currentStartup), order: undefined });
+        setPendingStartup(activeVmid, newStartup);
+        setOrderedIds((prev) => [...prev.filter((id) => id !== activeVmid), activeVmid]);
+      }
+      return;
+    }
+
+    // Dropped on a numbered band header → assign that order value
     if (overIdStr.startsWith('band-')) {
       const bandValue = parseInt(overIdStr.replace('band-', ''), 10);
       if (!isNaN(bandValue)) {
         const serverGuest = guests.find((g) => g.vmid === activeVmid);
         if (serverGuest) {
           const currentStartup = pendingOverrides.get(activeVmid)?.startup ?? serverGuest.startup;
-          const newStartup = assignBandOrder(currentStartup, bandValue);
+          const newStartup = formatStartup({ ...parseStartup(currentStartup), order: bandValue });
           setPendingStartup(activeVmid, newStartup);
-          // Re-sort orderedIds
           setOrderedIds((prev) => {
             const withoutActive = prev.filter((id) => id !== activeVmid);
-            // Insert in sorted position
             const sorted = [...withoutActive].sort((a, b) => {
               const aG = displayGuests.find((g) => g.vmid === a);
               const bG = displayGuests.find((g) => g.vmid === b);
-              const orderA = parseStartup(aG?.startup ?? '').order ?? Number.POSITIVE_INFINITY;
-              const orderB = parseStartup(bG?.startup ?? '').order ?? Number.POSITIVE_INFINITY;
-              return orderA - orderB;
+              const oA = parseStartup(aG?.startup ?? '').order ?? Number.POSITIVE_INFINITY;
+              const oB = parseStartup(bG?.startup ?? '').order ?? Number.POSITIVE_INFINITY;
+              return oA - oB;
             });
             const insertAt = sorted.findIndex((id) => {
               const g = displayGuests.find((dg) => dg.vmid === id);
@@ -234,7 +240,7 @@ export function GuestTable({ guests, isLoading, error, filters }: GuestTableProp
       return;
     }
 
-    // Dropped on another guest → reorder
+    // Dropped on another guest row → reorder
     if (active.id === over.id) return;
     const oldIndex = sortableIds.indexOf(Number(active.id));
     const newIndex = sortableIds.indexOf(Number(over.id));
@@ -245,7 +251,6 @@ export function GuestTable({ guests, isLoading, error, filters }: GuestTableProp
     const nextOrderedIds = [...reorderedVisibleIds, ...orderedIds.filter((id) => !visibleSet.has(id))];
     setOrderedIds(nextOrderedIds);
 
-    // Assign sequential orders and queue as pending
     const byId = new Map(guests.map((g) => [g.vmid, g]));
     const entries: ReorderEntry[] = nextOrderedIds.flatMap((id, index) => {
       const g = byId.get(id);
@@ -270,11 +275,9 @@ export function GuestTable({ guests, isLoading, error, filters }: GuestTableProp
     setIsSaving(true);
     try {
       const applyPromises: Promise<void>[] = [];
-
       for (const [vmid, override] of pendingOverrides.entries()) {
         const serverGuest = guests.find((g) => g.vmid === vmid);
         if (!serverGuest) continue;
-
         if (override.onboot !== undefined && override.onboot !== serverGuest.onboot) {
           applyPromises.push(updateOnboot(vmid, serverGuest.type, override.onboot));
         }
@@ -282,7 +285,6 @@ export function GuestTable({ guests, isLoading, error, filters }: GuestTableProp
           applyPromises.push(updateStartup(vmid, serverGuest.type, override.startup));
         }
       }
-
       await Promise.all(applyPromises);
       toast.success(`Applied ${applyPromises.length} change${applyPromises.length !== 1 ? 's' : ''} to Proxmox`);
       setPendingOverrides(new Map());
@@ -293,6 +295,21 @@ export function GuestTable({ guests, isLoading, error, filters }: GuestTableProp
     } finally {
       setIsSaving(false);
     }
+  }
+
+  function renderGuestRow(guest: Guest) {
+    const serverGuest = guests.find((g) => g.vmid === guest.vmid) ?? guest;
+    return (
+      <GuestRow
+        key={`${guest.type}-${guest.vmid}`}
+        guest={serverGuest}
+        displayGuest={guest}
+        hasPendingChanges={pendingOverrides.has(guest.vmid)}
+        onUpdateOnboot={handleOnboot}
+        onUpdateStartup={handleStartup}
+        isDragDisabled={isFiltered}
+      />
+    );
   }
 
   if (error) {
@@ -307,7 +324,6 @@ export function GuestTable({ guests, isLoading, error, filters }: GuestTableProp
 
   return (
     <>
-      {/* Pending changes toolbar */}
       {pendingCount > 0 && (
         <div className="mb-3 flex items-center justify-between rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2.5">
           <span className="text-sm text-amber-300">
@@ -370,49 +386,27 @@ export function GuestTable({ guests, isLoading, error, filters }: GuestTableProp
 
               {!isLoading && (
                 <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
-                  {bandedGuests.map(({ band, guests: bandGuests }) => {
-                    if (band === null) {
-                      // Ungrouped guests
-                      if (bandGuests.length === 0) return null;
-                      return bandGuests.map((guest) => {
-                        const serverGuest = guests.find((g) => g.vmid === guest.vmid) ?? guest;
-                        return (
-                          <GuestRow
-                            key={`${guest.type}-${guest.vmid}`}
-                            guest={serverGuest}
-                            displayGuest={guest}
-                            hasPendingChanges={pendingOverrides.has(guest.vmid)}
-                            onUpdateOnboot={handleOnboot}
-                            onUpdateStartup={handleStartup}
-                            isDragDisabled={isFiltered}
-                          />
-                        );
-                      });
-                    }
+                  {/* Numbered bands (predefined + dynamic, sorted) */}
+                  {bandRows.map(({ value, variant, guests: bandGuests }) => [
+                    <BootBandRow
+                      key={`band-${value}`}
+                      value={value}
+                      variant={variant}
+                      guestCount={bandGuests.length}
+                      isOver={overBandValue === value}
+                    />,
+                    ...bandGuests.map(renderGuestRow),
+                  ])}
 
-                    return [
-                      <BootBandRow
-                        key={`band-${band}`}
-                        value={band}
-                        guestCount={bandGuests.length}
-                        isOver={overBandValue === band}
-                      />,
-                      ...bandGuests.map((guest) => {
-                        const serverGuest = guests.find((g) => g.vmid === guest.vmid) ?? guest;
-                        return (
-                          <GuestRow
-                            key={`${guest.type}-${guest.vmid}`}
-                            guest={serverGuest}
-                            displayGuest={guest}
-                            hasPendingChanges={pendingOverrides.has(guest.vmid)}
-                            onUpdateOnboot={handleOnboot}
-                            onUpdateStartup={handleStartup}
-                            isDragDisabled={isFiltered}
-                          />
-                        );
-                      }),
-                    ];
-                  })}
+                  {/* Unordered band — always shown at the bottom */}
+                  <BootBandRow
+                    key="band-unordered"
+                    value="unordered"
+                    variant="unordered"
+                    guestCount={unorderedGuests.length}
+                    isOver={overBandValue === 'unordered'}
+                  />
+                  {unorderedGuests.map(renderGuestRow)}
                 </SortableContext>
               )}
 
@@ -438,11 +432,15 @@ export function GuestTable({ guests, isLoading, error, filters }: GuestTableProp
               <GripVertical className="h-4 w-4 text-muted-foreground" />
               <span className="font-mono text-xs text-muted-foreground">{activeGuest.vmid}</span>
               <span className="font-medium">{activeGuest.name}</span>
-              {overBandValue !== null && (
+              {overBandValue === 'unordered' ? (
+                <span className="ml-1 rounded bg-slate-500/20 px-1.5 py-0.5 text-xs text-slate-300">
+                  → Unordered
+                </span>
+              ) : overBandValue !== null ? (
                 <span className="ml-1 rounded bg-blue-500/20 px-1.5 py-0.5 text-xs text-blue-300">
                   → order {overBandValue}
                 </span>
-              )}
+              ) : null}
             </div>
           )}
         </DragOverlay>
