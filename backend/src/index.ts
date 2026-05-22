@@ -3,6 +3,7 @@ dotenv.config();
 
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
+import path from 'path';
 import guestsRouter from './routes/guests';
 import configRouter from './routes/config';
 
@@ -40,6 +41,16 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
       : 500;
   res.status(status).json({ error: message });
 });
+
+// In production, serve the compiled frontend and handle SPA routing.
+// __dirname is backend/dist at runtime; frontend/dist is two levels up.
+if (process.env.NODE_ENV === 'production') {
+  const frontendDist = path.join(__dirname, '../../frontend/dist');
+  app.use(express.static(frontendDist));
+  app.get('*', (_req, res) => {
+    res.sendFile(path.join(frontendDist, 'index.html'));
+  });
+}
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
