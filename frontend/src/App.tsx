@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card';
 import { useGuests, useStatus } from './hooks/useProxmox';
 import type { FilterState } from './types';
 
+
 function App() {
   const [filters, setFilters] = useState<FilterState>({ search: '', type: 'all', autoboot: 'all' });
   const statusQuery = useStatus();
@@ -86,7 +87,7 @@ function App() {
               <div>
                 <CardTitle>Boot Manager Dashboard</CardTitle>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Toggle autoboot, tune startup order/delay, and drag rows to reprioritize boot sequence.
+                  Drag guests into boot order bands, toggle autoboot, and tune delays. Changes are staged locally — click <strong>Save changes</strong> to apply to Proxmox.
                 </p>
               </div>
               <FilterBar filters={filters} onChange={setFilters} totalCount={guests.length} filteredCount={filteredCount} />

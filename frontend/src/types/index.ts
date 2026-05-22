@@ -54,3 +54,11 @@ export interface FilterState {
   type: FilterType;
   autoboot: FilterAutoboot;
 }
+
+export const BOOT_BANDS = [1, 2, 3, 4, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100] as const;
+export type BandValue = (typeof BOOT_BANDS)[number];
+
+export interface PendingOverride {
+  onboot?: boolean;
+  startup?: string;
+}

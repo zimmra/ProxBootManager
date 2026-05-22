@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { GripVertical, Loader2 } from 'lucide-react';
+import { GripVertical } from 'lucide-react';
 import { TableRow, TableCell } from './ui/table';
 import { Badge } from './ui/badge';
 import { Switch } from './ui/switch';
@@ -11,8 +11,8 @@ import type { Guest, NormalizedGuestType } from '../types';
 
 interface GuestRowProps {
   guest: Guest;
-  isOnbootPending: boolean;
-  isStartupPending: boolean;
+  displayGuest: Guest;
+  hasPendingChanges: boolean;
   onUpdateOnboot: (vmid: number, type: NormalizedGuestType, onboot: boolean) => void;
   onUpdateStartup: (vmid: number, type: NormalizedGuestType, startup: string) => void;
   isDragDisabled?: boolean;
@@ -20,8 +20,8 @@ interface GuestRowProps {
 
 export function GuestRow({
   guest,
-  isOnbootPending,
-  isStartupPending,
+  displayGuest,
+  hasPendingChanges,
   onUpdateOnboot,
   onUpdateStartup,
   isDragDisabled = false,
@@ -35,34 +35,34 @@ export function GuestRow({
     opacity: isDragging ? 0.4 : 1,
   };
 
-  const parsed = parseStartup(guest.startup);
+  const parsed = parseStartup(displayGuest.startup);
   const [orderVal, setOrderVal] = useState(parsed.order !== undefined ? String(parsed.order) : '');
   const [upVal, setUpVal] = useState(parsed.up !== undefined ? String(parsed.up) : '');
 
-  const prevStartup = useRef(guest.startup);
+  const prevStartup = useRef(displayGuest.startup);
   useEffect(() => {
-    if (guest.startup !== prevStartup.current) {
-      prevStartup.current = guest.startup;
-      const p = parseStartup(guest.startup);
+    if (displayGuest.startup !== prevStartup.current) {
+      prevStartup.current = displayGuest.startup;
+      const p = parseStartup(displayGuest.startup);
       setOrderVal(p.order !== undefined ? String(p.order) : '');
       setUpVal(p.up !== undefined ? String(p.up) : '');
     }
-  }, [guest.startup]);
+  }, [displayGuest.startup]);
 
   function commitOrder(raw: string) {
-    const p = parseStartup(guest.startup);
+    const p = parseStartup(displayGuest.startup);
     const num = raw === '' ? undefined : parseInt(raw, 10);
     if (raw !== '' && (isNaN(num as number) || (num as number) < 0)) return;
     const next = formatStartup({ ...p, order: num });
-    if (next !== guest.startup) onUpdateStartup(guest.vmid, guest.type, next);
+    if (next !== displayGuest.startup) onUpdateStartup(guest.vmid, guest.type, next);
   }
 
   function commitUp(raw: string) {
-    const p = parseStartup(guest.startup);
+    const p = parseStartup(displayGuest.startup);
     const num = raw === '' ? undefined : parseInt(raw, 10);
     if (raw !== '' && (isNaN(num as number) || (num as number) < 0)) return;
     const next = formatStartup({ ...p, up: num });
-    if (next !== guest.startup) onUpdateStartup(guest.vmid, guest.type, next);
+    if (next !== displayGuest.startup) onUpdateStartup(guest.vmid, guest.type, next);
   }
 
   const isRunning = guest.status === 'running';
@@ -71,12 +71,17 @@ export function GuestRow({
     <TableRow
       ref={setNodeRef}
       style={style}
-      className={isDragging ? 'z-50 shadow-lg' : ''}
+      className={`transition-colors ${isDragging ? 'z-50 shadow-lg' : ''} ${
+        hasPendingChanges ? 'bg-amber-500/5 ring-1 ring-inset ring-amber-500/20' : ''
+      }`}
       {...attributes}
     >
       {/* VMID */}
       <TableCell className="w-16 font-mono text-xs text-muted-foreground">
         {guest.vmid}
+        {hasPendingChanges && (
+          <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-400" title="Unsaved changes" />
+        )}
       </TableCell>
 
       {/* Name */}
@@ -103,54 +108,38 @@ export function GuestRow({
 
       {/* Autoboot */}
       <TableCell className="w-20">
-        <div className="flex items-center gap-1.5">
-          {isOnbootPending ? (
-            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-          ) : (
-            <Switch
-              checked={guest.onboot}
-              onCheckedChange={(v) => onUpdateOnboot(guest.vmid, guest.type, v)}
-              disabled={isOnbootPending}
-            />
-          )}
-        </div>
+        <Switch
+          checked={displayGuest.onboot}
+          onCheckedChange={(v) => onUpdateOnboot(guest.vmid, guest.type, v)}
+        />
       </TableCell>
 
       {/* Boot Order */}
       <TableCell className="w-20">
-        <div className="relative">
-          {isStartupPending && (
-            <Loader2 className="absolute right-1 top-2 h-3.5 w-3.5 animate-spin text-muted-foreground" />
-          )}
-          <Input
-            type="number"
-            min={0}
-            value={orderVal}
-            onChange={(e) => setOrderVal(e.target.value)}
-            onBlur={() => commitOrder(orderVal)}
-            onKeyDown={(e) => e.key === 'Enter' && commitOrder(orderVal)}
-            placeholder="–"
-            className="h-7 w-16 pr-1 text-center text-xs [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-            disabled={isStartupPending}
-          />
-        </div>
+        <Input
+          type="number"
+          min={0}
+          value={orderVal}
+          onChange={(e) => setOrderVal(e.target.value)}
+          onBlur={() => commitOrder(orderVal)}
+          onKeyDown={(e) => e.key === 'Enter' && commitOrder(orderVal)}
+          placeholder="–"
+          className="h-7 w-16 pr-1 text-center text-xs [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+        />
       </TableCell>
 
       {/* Boot Delay (up) */}
       <TableCell className="w-20">
-        <div className="relative">
-          <Input
-            type="number"
-            min={0}
-            value={upVal}
-            onChange={(e) => setUpVal(e.target.value)}
-            onBlur={() => commitUp(upVal)}
-            onKeyDown={(e) => e.key === 'Enter' && commitUp(upVal)}
-            placeholder="–"
-            className="h-7 w-16 pr-1 text-center text-xs [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-            disabled={isStartupPending}
-          />
-        </div>
+        <Input
+          type="number"
+          min={0}
+          value={upVal}
+          onChange={(e) => setUpVal(e.target.value)}
+          onBlur={() => commitUp(upVal)}
+          onKeyDown={(e) => e.key === 'Enter' && commitUp(upVal)}
+          placeholder="–"
+          className="h-7 w-16 pr-1 text-center text-xs [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+        />
       </TableCell>
 
       {/* Drag Handle */}
